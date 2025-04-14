@@ -1,0 +1,60 @@
+services:
+  cluster-master:
+    image: firasj/spark-docker-cluster
+    container_name: cluster-master
+    ports:
+      - "8088:8088"   # YARN ResourceManager UI
+      - "4040:4040"   # Spark UI
+      - "19888:19888" # JobHistory Server UI
+      - "9000:9000"   # HDFS NameNode
+      - "9870:9870"   # HDFS Web UI
+    volumes:
+      - "./app:/app"
+      - "./app/data:/data" # Mount data folder for sample files
+    networks:
+      - spark-cluster
+    depends_on:
+      - cassandra-server
+    hostname: cluster-master
+    tty: true
+    working_dir: /app
+    entrypoint:
+      - bash
+      - /app/app.sh
+
+  cluster-slave-1:
+    image: firasj/spark-docker-cluster
+    container_name: cluster-slave-1
+    networks:
+      - spark-cluster
+    hostname: cluster-slave-1
+    tty: true
+    depends_on:
+      - cluster-master
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4g
+
+  cassandra-server:
+    image: cassandra
+    container_name: cassandra-server
+    ports:
+      - "9042:9042" # Cassandra CQL port
+      - "7000:7000" # Cassandra inter-node communication
+    networks:
+      - spark-cluster
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MyCluster
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  spark-cluster:
+    driver: bridge
