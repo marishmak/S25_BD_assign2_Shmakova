@@ -16,8 +16,12 @@ spark = SparkSession.builder \
 
 sc = spark.sparkContext
 
-# Read user query from stdin
-query = sys.stdin.read().strip().lower()
+# Read user query from command-line arguments
+if len(sys.argv) != 2:
+    print("Usage: python query.py 'your query here'")
+    sys.exit(1)
+
+query = sys.argv[1].strip().lower()
 query_terms = query.split()
 
 # Load Cassandra tables into DataFrames

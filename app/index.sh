@@ -62,13 +62,6 @@ fi
 # Define the path to the Hadoop Streaming JAR
 HADOOP_STREAMING_JAR_PATH="/usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-3.4.1.jar"
 
-# Download the Hadoop Streaming JAR if it is missing
-if [ ! -f "$HADOOP_STREAMING_JAR_PATH" ]; then
-    echo "Downloading Hadoop Streaming JAR..."
-    mkdir -p "/usr/local/hadoop/share/hadoop/tools/lib" || { echo "Error: Failed to create directory for Hadoop Streaming JAR."; exit 1; }
-    wget -O "$HADOOP_STREAMING_JAR_PATH" "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-streaming/3.4.1/hadoop-streaming-3.4.1.jar" || { echo "Error: Failed to download Hadoop Streaming JAR."; exit 1; }
-fi
-
 # Verify the existence of the Hadoop Streaming JAR
 if [ ! -f "$HADOOP_STREAMING_JAR_PATH" ]; then
     echo "Error: Hadoop Streaming JAR not found at '$HADOOP_STREAMING_JAR_PATH'."
@@ -85,9 +78,10 @@ echo "Uploading virtual environment to HDFS..."
 hdfs dfs -mkdir -p /tmp/index/venv || true
 hdfs dfs -put .venv.tar.gz /tmp/index/venv/.venv.tar.gz
 
-# Run the Hadoop Streaming job
+# Run the Hadoop Streaming job with updated commons-cli
 echo "Running Hadoop Streaming job..."
 hadoop jar "$HADOOP_STREAMING_JAR_PATH" \
+    -libjars /path/to/commons-cli-1.4.jar \
     -D mapreduce.job.name="Indexing Job" \
     -files hdfs:///tmp/index/venv/.venv.tar.gz#venv,$MAPPER_PATH,$REDUCER_PATH \
     -input "$INPUT_PATH" \

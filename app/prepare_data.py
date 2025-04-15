@@ -23,7 +23,7 @@ except Exception as e:
     exit(1)
 
 # Select required columns and sample 100 documents
-n = 11
+n = 1000
 print("Sampling documents...")
 df_sample = df.select(['id', 'title', 'text']).sample(fraction=100 * n / df.count(), seed=0).limit(n)
 
