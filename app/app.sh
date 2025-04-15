@@ -22,6 +22,7 @@ if [ -f ".venv.tar.gz" ]; then
 fi
 venv-pack -o .venv.tar.gz
 
+
 # Initialize Cassandra schema using app.py
 echo "Initializing Cassandra schema..."
 python app.py
