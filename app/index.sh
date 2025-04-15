@@ -60,7 +60,10 @@ if [ ! -f "$MAPPER_PATH" ] || [ ! -f "$REDUCER_PATH" ]; then
 fi
 
 # Define the path to the Hadoop Streaming JAR
-HADOOP_STREAMING_JAR_PATH="/usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-3.4.1.jar"
+HADOOP_STREAMING_JAR_PATH="/app/hadoop-streaming-3.4.1.jar"
+
+echo "Checking version of commons-cli"
+jar tf /app/hadoop-streaming-3.4.1.jar | grep commons-cli
 
 # Verify the existence of the Hadoop Streaming JAR
 if [ ! -f "$HADOOP_STREAMING_JAR_PATH" ]; then
@@ -78,16 +81,19 @@ echo "Uploading virtual environment to HDFS..."
 hdfs dfs -mkdir -p /tmp/index/venv || true
 hdfs dfs -put .venv.tar.gz /tmp/index/venv/.venv.tar.gz
 
-# Run the Hadoop Streaming job with updated commons-cli
+# Define the custom classpath
+CUSTOM_CLASSPATH="/app/lib/commons-cli-1.4.jar:$HADOOP_STREAMING_JAR_PATH"
+
+# Run the Hadoop Streaming job
 echo "Running Hadoop Streaming job..."
 hadoop jar "$HADOOP_STREAMING_JAR_PATH" \
-    -libjars /path/to/commons-cli-1.4.jar \
     -D mapreduce.job.name="Indexing Job" \
     -files hdfs:///tmp/index/venv/.venv.tar.gz#venv,$MAPPER_PATH,$REDUCER_PATH \
     -input "$INPUT_PATH" \
     -output "$OUTPUT_DIR" \
     -mapper "venv/.venv/bin/python3 mapper1.py" \
     -reducer "venv/.venv/bin/python3 reducer1.py" || { echo "Error: Hadoop Streaming job failed."; exit 1; }
+
 
 # Verify the output directory was created
 echo "Verifying output directory..."

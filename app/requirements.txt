@@ -6,3 +6,8 @@ pyspark
 tqdm
 venv-pack
 cqlsh
+click==8.1.8
+geomet==0.2.1.post1
+py4j==0.10.9.7
+six==1.17.0
+v==1
