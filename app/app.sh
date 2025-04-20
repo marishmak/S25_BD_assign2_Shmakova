@@ -32,7 +32,7 @@ echo "Preparing data..."
 bash prepare_data.sh
 
 # Run the indexer
-bash index.sh
+bash index.sh "/app/data"
 
 # Run the ranker with a query
-bash search.sh "artificial intelligence"
+bash search.sh "Manna and Chompa"

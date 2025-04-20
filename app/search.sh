@@ -1,28 +1,18 @@
 #!/bin/bash
-echo "This script will include commands to search for documents given the query using Spark RDD"
 
-# Activate the virtual environment
-source .venv/bin/activate
-
-# Python of the driver (/app/.venv/bin/python)
-export PYSPARK_DRIVER_PYTHON=$(which python)
-
-# Python of the executor (./venv/bin/python)
-export PYSPARK_PYTHON=./venv/bin/python
-
-# Check if a query is provided
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 'your query here'"
+# Check if query is provided
+if [ -z "$1" ]; then
+    echo "Usage: search.sh <query>"
     exit 1
 fi
 
-QUERY=$1
+# Activate virtual environment
+source .venv/bin/activate
 
-# Submit the PySpark application to YARN
-spark-submit \
-    --master yarn \
-    --deploy-mode cluster \
-    --archives hdfs:///tmp/venv/.venv.tar.gz#venv \
-    --conf spark.logConf=true \
-    --conf spark.ui.showConsoleProgress=false \
-    query.py "$QUERY"
+# Run the query
+spark-submit --packages com.datastax.spark:spark-cassandra-connector_2.12:3.1.0 \
+    --conf spark.cassandra.connection.host=cassandra-server \
+    query.py "$1"
+
+
+echo "Successfully search!"

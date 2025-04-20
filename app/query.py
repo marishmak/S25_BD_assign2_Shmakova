@@ -1,89 +1,95 @@
 #!/usr/bin/env python3
-
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 import sys
+from pyspark.sql import SparkSession
+from cassandra.cluster import Cluster
+from cassandra.auth import PlainTextAuthProvider
+import math
 
-# BM25 parameters
-k1 = 1.5
-b = 0.75
+def calculate_bm25(N, dl, avgdl, f, qf, df, k1=1.2, b=0.75):
+    # BM25 scoring function
+    K = k1 * ((1 - b) + b * (dl / avgdl))
+    idf = math.log((N - df + 0.5) / (df + 0.5) + 1)
+    return idf * (f * (k1 + 1)) / (f + K) * (qf * (k1 + 1)) / (qf + K)
 
-# Initialize Spark session
-spark = SparkSession.builder \
-    .appName("BM25Search") \
-    .config("spark.cassandra.connection.host", "cassandra-host") \
-    .getOrCreate()
+def main():
+    # Get query from command line argument
+    if len(sys.argv) < 2:
+        print("Usage: query.py <query>")
+        sys.exit(1)
+    
+    query = sys.argv[1]
+    
+    # Initialize Spark session
+    spark = SparkSession.builder \
+        .appName("DocumentRanker") \
+        .config("spark.cassandra.connection.host", "cassandra-server") \
+        .getOrCreate()
+    
+    sc = spark.sparkContext
+    
+    # Connect to Cassandra
+    cluster = Cluster(['cassandra-server'])
+    session = cluster.connect('index_keyspace')
+    
+    # Get total number of documents
+    N = session.execute("SELECT COUNT(*) FROM document_index").one()[0]
+    
+    # Get average document length
+    avgdl = session.execute("SELECT AVG(total_term_frequency) FROM bm25_stats").one()[0]
+    
+    # Tokenize query
+    query_terms = re.findall(r'\w+', query.lower())
+    
+    # Calculate term frequencies in query
+    query_term_freq = {}
+    for term in query_terms:
+        query_term_freq[term] = query_term_freq.get(term, 0) + 1
+    
+    # Create RDD of query terms
+    query_terms_rdd = sc.parallelize(list(query_term_freq.items()))
+    
+    # For each term, get document stats and calculate BM25
+    def process_term(term_qf):
+        term, qf = term_qf
+        rows = session.execute(
+            "SELECT doc_id, term_frequency FROM document_index WHERE term = %s", (term,))
+        
+        df_row = session.execute(
+            "SELECT document_frequency FROM bm25_stats WHERE term = %s", (term,)).one()
+        df = df_row[0] if df_row else 0
+        
+        results = []
+        for row in rows:
+            doc_id = row.doc_id
+            f = row.term_frequency
+            
+            # Get document length
+            dl_row = session.execute(
+                "SELECT SUM(term_frequency) FROM document_index WHERE doc_id = %s", (doc_id,)).one()
+            dl = dl_row[0] if dl_row else 0
+            
+            score = calculate_bm25(N, dl, avgdl, f, qf, df)
+            results.append((doc_id, score))
+        
+        return results
+    
+    scores_rdd = query_terms_rdd.flatMap(process_term)
+    
+    # Sum scores by document
+    doc_scores = scores_rdd.reduceByKey(lambda a, b: a + b)
+    
+    # Get top 10 documents
+    top_docs = doc_scores.takeOrdered(10, key=lambda x: -x[1])
+    
+    # Get document titles
+    for doc_id, score in top_docs:
+        title_row = session.execute(
+            "SELECT title FROM document_titles WHERE doc_id = %s", (doc_id,)).one()
+        title = title_row[0] if title_row else "Unknown"
+        print(f"Document ID: {doc_id}, Title: {title}, Score: {score:.4f}")
+    
+    cluster.shutdown()
+    spark.stop()
 
-sc = spark.sparkContext
-
-# Read user query from command-line arguments
-if len(sys.argv) != 2:
-    print("Usage: python query.py 'your query here'")
-    sys.exit(1)
-
-query = sys.argv[1].strip().lower()
-query_terms = query.split()
-
-# Load Cassandra tables into DataFrames
-vocabulary_df = spark.read \
-    .format("org.apache.spark.sql.cassandra") \
-    .options(table="vocabulary", keyspace="index_keyspace") \
-    .load()
-
-document_index_df = spark.read \
-    .format("org.apache.spark.sql.cassandra") \
-    .options(table="document_index", keyspace="index_keyspace") \
-    .load()
-
-bm25_stats_df = spark.read \
-    .format("org.apache.spark.sql.cassandra") \
-    .options(table="bm25_stats", keyspace="index_keyspace") \
-    .load()
-
-# Broadcast BM25 statistics for efficiency
-avg_doc_length = bm25_stats_df.selectExpr("sum(total_term_frequency) / count(term)").collect()[0][0]
-total_docs = bm25_stats_df.count()
-
-# Filter vocabulary to only include query terms
-query_vocabulary_df = vocabulary_df.filter(col("term").isin(query_terms))
-
-# Join with document index to get term frequencies for query terms
-query_term_frequencies_df = query_vocabulary_df.join(
-    document_index_df,
-    query_vocabulary_df.term == document_index_df.term
-).select(
-    document_index_df.term,
-    document_index_df.doc_id,
-    document_index_df.term_frequency
-)
-
-# Broadcast BM25 stats for query terms
-query_bm25_stats_df = bm25_stats_df.filter(col("term").isin(query_terms))
-query_bm25_stats_rdd = query_bm25_stats_df.rdd.collectAsMap()
-query_bm25_stats_broadcast = sc.broadcast(query_bm25_stats_rdd)
-
-# Calculate BM25 scores
-def calculate_bm25_score(row):
-    term = row["term"]
-    doc_id = row["doc_id"]
-    term_freq = row["term_frequency"]
-
-    stats = query_bm25_stats_broadcast.value[term]
-    doc_freq = stats["document_frequency"]
-    idf = total_docs / doc_freq
-    numerator = term_freq * (k1 + 1)
-    denominator = term_freq + k1 * (1 - b + b * avg_doc_length)
-    score = idf * (numerator / denominator)
-
-    return (doc_id, score)
-
-bm25_scores_rdd = query_term_frequencies_df.rdd.map(calculate_bm25_score)
-
-# Aggregate scores per document
-top_documents = bm25_scores_rdd.reduceByKey(lambda x, y: x + y) \
-    .sortBy(lambda x: x[1], ascending=False) \
-    .take(10)
-
-# Output top 10 documents
-for doc_id, score in top_documents:
-    print(f"Document ID: {doc_id}, Score: {score}")
+if __name__ == "__main__":
+    main()
